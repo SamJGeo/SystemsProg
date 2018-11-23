@@ -1,0 +1,5 @@
+﻿Sam George report for SP Assessed Exercise 1. 
+tldlist.c and date.c compile, build the AVL tree and count occurrences of each tld for both small.txt and large.txt correctly.
+However the program does have a memory leak which I was not able to detect the source of. Limitations of the program are as follows:
+The whole program will be limited by memory, so if you create enough nodes in the list then the heap may reach its limit.
+Day month and year are all type integer so if the data passed in exceeds the limit for int OR if the data isn’t of type integer it will cause errors

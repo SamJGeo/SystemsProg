@@ -77,8 +77,9 @@ int main(int argc, char *argv[]) {
     cleanup(it, tld, begin, end);
     return -1;
   }
-  if (argc == 3)
+  if (argc == 3){
     process(stdin, tld);
+  }
   else {
     for (i = 3; i < argc; i++) {
       if (strcmp(argv[i], "-") == 0)
