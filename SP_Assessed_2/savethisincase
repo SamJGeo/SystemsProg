@@ -1,0 +1,17 @@
+  for(int i = 0; i != num_threads;i++){
+  //do the work, start threads here
+  // 4a&b. lookup dependencies and invoke 'process
+    threads.push_back(std::thread([&table,&q](){
+      // 4. for each file on the workQ
+      while ( q.getSize() > 0 ) {
+        std::string filename = q.pop();
+
+        if (table.get(filename) == table.getEnd()) {
+          fprintf(stderr, "Mismatch between table and workQ\n");
+          return -1;
+        }
+        process(filename.c_str(),table.getVals(filename),&table,&q);
+      }
+      return 0;
+    }));
+  }
