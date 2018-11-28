@@ -95,16 +95,6 @@
  * openFile()  - attempts to open a filename using the search path defined by the dirs vector.
  */
 
-
-/* This code was written by:
- * Sam George 2261522g
- * SP Exercise 2
- *
- * This is my own work as defined in the Academic Ethis Agreement I have signed 
- *
-*/
-
-
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -115,96 +105,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <list>
-#include <mutex>
-#include <condition_variable>
-#include <thread>
-#include "optional.hpp"
-using nonstd::optional;
-
-
-
-
 
 std::vector<std::string> dirs;
-
-
-
-struct theTable{
-private:
-  std::unordered_map<std::string, std::list<std::string>> t;
-  std::mutex m;
-
-public:
-  //add values to the table
-  void add(std::string k, std::list<std::string> vals){
-    std::unique_lock<std::mutex> lock(m);
-    t.insert({k,{vals}});
-  }
-
-  //get values from a key
-  std::list<std::string> * getVals(std::string key){
-    std::unique_lock<std::mutex> lock(m);
-    std::list<std::string> *vals = &t[key];
-    return(vals);
-  }
-
- //get the last value in the map
-  std::unordered_map<std::string,std::list<std::string>>::iterator getEnd(){
-    std::unique_lock<std::mutex> lock(m);
-    return(t.end());
-  }
-  std::unordered_map<std::string,std::list<std::string>>::iterator get(std::string f){
-      std::unique_lock<std::mutex> lock(m);
-      return(t.find(f));
-  }
-
-
-};
-
-
-struct workQ{
-private:
-  std::list<std::string> q;
-  std::mutex m;
-  int size;
-
-public:
-  workQ() {
-    size = 0;
-    std::list<std::string> q;
-    //done = false;
-  }
-  // a thread safe pop to ensure that a mutex is locked when we 
-  // check size so it doesnt end up with a data race
-  optional<std::string> ts_pop(){
-     //enter critical region
-    std::unique_lock<std::mutex> lock(m);
-    if(size > 0){
-      std::string f = q.front();
-      q.pop_front();
-      size -= 1;
-      return(f);
-
-    } else {
-      return {};
-    }
-    
-    
-  }
-  
-  int getSize(){
-    std::unique_lock<std::mutex> lock(m);
-    return(size);
-  }
-
-
-  void push(std::string s){
-    std::unique_lock<std::mutex> lock(m);
-    q.push_back(s);
-    size+=1;
-  }
-
-};
+std::unordered_map<std::string, std::list<std::string>> theTable;
+std::list<std::string> workQ;
 
 std::string dirName(const char * c_str) {
   std::string s = c_str; // s takes ownership of the string content by allocating memory for it
@@ -235,7 +139,7 @@ static FILE *openFile(const char *file) {
 }
 
 // process file, looking for #include "foo.h" lines
-static void process(const char *file, std::list<std::string> *ll, theTable * table, workQ * queue) {
+static void process(const char *file, std::list<std::string> *ll) {
   char buf[4096], name[4096];
   // 1. open the file
   FILE *fd = openFile(file);
@@ -265,11 +169,11 @@ static void process(const char *file, std::list<std::string> *ll, theTable * tab
     // 2bii. append file name to dependency list
     ll->push_back( {name} );
     // 2bii. if file name not already in table ...
-    if (table->get(name) != table->getEnd()) { continue; }
+    if (theTable.find(name) != theTable.end()) { continue; }
     // ... insert mapping from file name to empty list in table ...
-    table->add(  name, {}  );
+    theTable.insert( { name, {} } );
     // ... append file name to workQ
-    queue->push( name );
+    workQ.push_back( name );
   }
   // 3. close file
   fclose(fd);
@@ -278,7 +182,7 @@ static void process(const char *file, std::list<std::string> *ll, theTable * tab
 // iteratively print dependencies
 static void printDependencies(std::unordered_set<std::string> *printed,
                               std::list<std::string> *toProcess,
-                              FILE *fd, theTable * table) {
+                              FILE *fd) {
   if (!printed || !toProcess || !fd) return;
 
   // 1. while there is still a file in the toProcess list
@@ -287,7 +191,7 @@ static void printDependencies(std::unordered_set<std::string> *printed,
     std::string name = toProcess->front();
     toProcess->pop_front();
     // 3. lookup file in the table, yielding list of dependencies
-    std::list<std::string> *ll = table->getVals(name);
+    std::list<std::string> *ll = &theTable[name];
     // 4. iterate over dependencies
     for (auto iter = ll->begin(); iter != ll->end(); iter++) {
       // 4a. if filename is already in the printed table, continue
@@ -303,20 +207,8 @@ static void printDependencies(std::unordered_set<std::string> *printed,
 }
 
 int main(int argc, char *argv[]) {
-  
-  //create instances of the table, queue and threads vector
-  theTable table;
-  workQ q;
-  std::vector<std::thread> threads;
   // 1. look up CPATH in environment
   char *cpath = getenv("CPATH");
-  //get the number of threads from the terminal
-  //if nothing is input it defaults to 2
-  char *thread_num_string=getenv("CRAWLER_THREADS");
-  long int num_threads = 2;
-  if(thread_num_string != NULL){
-    num_threads = std::stoi(thread_num_string);
-  }
 
   // determine the number of -Idir arguments
   int i;
@@ -355,38 +247,28 @@ int main(int argc, char *argv[]) {
     std::string obj = pair.first + ".o";
 
     // 3a. insert mapping from file.o to file.ext
-    table.add(  obj, { argv[i] }  );
+    theTable.insert( { obj, { argv[i] } } );
     
     // 3b. insert mapping from file.ext to empty list
-    table.add(  argv[i], { }  );
+    theTable.insert( { argv[i], { } } );
     
     // 3c. append file.ext on workQ
-    q.push( argv[i] );
+    workQ.push_back( argv[i] );
   }
 
-    for(int i = 0; i != num_threads;i++){
-  //do the work, start threads here
-  // 4a&b. lookup dependencies and invoke 'process
-    threads.push_back(std::thread([&table,&q](){
-      // 4. for each file on the workQ
-      
-      auto filename = q.ts_pop();
-      while (filename.has_value()) {
-        if (table.get(filename.value()) == table.getEnd()) {
-          fprintf(stderr, "Mismatch between table and workQ\n");
-          return -1;
-        }
-        process(filename.value().c_str(),table.getVals(filename.value()),&table,&q);
-        filename = q.ts_pop();
-      }
-      return 0;
-    }));
-  }
+  // 4. for each file on the workQ
+  while ( workQ.size() > 0 ) {
+    std::string filename = workQ.front();
+    workQ.pop_front();
 
-  for(int i = 0; i != num_threads;i++){
-      threads[i].join();
+    if (theTable.find(filename) == theTable.end()) {
+      fprintf(stderr, "Mismatch between table and workQ\n");
+      return -1;
+    }
+
+    // 4a&b. lookup dependencies and invoke 'process'
+    process(filename.c_str(), &theTable[filename]);
   }
-  
 
   // 5. for each file argument
   for (i = start; i < argc; i++) {
@@ -404,7 +286,7 @@ int main(int argc, char *argv[]) {
     printed.insert( obj );
     toProcess.push_back( obj );
     // 5d. invoke
-    printDependencies(&printed, &toProcess, stdout,&table);
+    printDependencies(&printed, &toProcess, stdout);
 
     printf("\n");
   }
